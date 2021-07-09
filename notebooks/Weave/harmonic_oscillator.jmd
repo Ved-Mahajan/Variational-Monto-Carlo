@@ -1,0 +1,210 @@
+---
+title : Harmonics Oscillator with Variational Monte Carlo
+author : Ved Mahajan
+---
+
+# Setup
+The hamiltonian for the harmonic oscillator is:
+
+``
+$ \hat H = -\frac{1}{2}\nabla^2 + \frac{x^2}{2} $
+``
+
+Let us choose one variational parameter $\alpha$ and the trial wave function to be simply a gaussian,
+``
+$  \psi_T(x,\alpha) = e^{-\alpha x^2} $
+``
+Using this as the ansatz, we can find the local energy and the distribution function to be, 
+``
+$\rho(x,\alpha) = e^{-2 \alpha x^2}$ 
+``
+
+``
+$ E_L = \alpha + x^2(\frac{1}{2} - 2 \alpha^2) $
+``
+
+# The code!
+
+## Import the packages.
+```julia
+using CSV
+using Plots
+```
+
+## Define the ansatz, probability distribution and local energy
+
+1. The Ansatz
+```julia
+function ansatz(x,α)
+	return exp(-α*x^2)
+end
+```
+
+2. The probability distribution
+```julia
+function probability_density(x,α)
+	return (ansatz(x,α)^2)/(sqrt(pi/α))
+end
+```
+
+3. Local Energy
+```julia
+function E_local(x,α)
+    return α + (x^2)*(1/2 - 2*α^2)
+end
+```
+
+Since the ansatz is a gaussian, the length was chosen to be $ \frac{3}{\sqrt{2\alpha}} $. This is to increase the efficiency as the probability distribution, which is square of gaussian dies out faster at higher lengths and that would mean, at larger points, the wavefunction is not much relevant.
+
+## Function for Metropolis algorithm 
+
+```julia
+function metropolis(N,α)
+	L = 3/sqrt(2*α)
+	x = rand(-L:0.000001:L)
+	E = 0
+	E2 = 0
+	Eln_avg = 0
+	ln_avg = 0
+	rejection_ratio = 0
+	#start the loop
+	for i in 1:N
+		x_t = x + 0.4*(2*rand()*L - L)
+		if probability_density(x_t,α) >= probability_density(x,α)
+			x = x_t
+		else
+			dummy = rand()
+			if dummy < probability_density(x_t,α)/probability_density(x,α)
+				x = x_t
+			else
+				rejection_ratio += 1/N
+			end
+		end		
+		E += E_local(x,α)/N
+		E2 += E_local(x,α)^2/N
+		Eln_avg += (-1*E_local(x,α)*(x^2))/N
+		ln_avg += (-x^2)/N
+	end
+	return E,E2,Eln_avg,ln_avg,rejection_ratio
+end
+```
+
+## Function for performing iterations for finding the α which minimizes the energy expectation value
+
+```julia
+function iterate_alpha()
+	α = 0.1
+	alpha_iter = 20
+	N = 500
+	random_walkers = 200
+	γ = 0.9
+	energy = Vector{Float64}(undef,alpha_iter)
+	alpha = Vector{Float64}(undef,alpha_iter)
+	variance = Vector{Float64}(undef,alpha_iter)
+	En_analytical = Vector{Float64}(undef,alpha_iter)
+	Var_analytical = Vector{Float64}(undef,alpha_iter)
+	for i in 1:alpha_iter
+		E = 0
+		E2 = 0
+		dE_dalpha = 0
+		Eln = 0
+		ln = 0
+		rejection_ratio = 0
+		for j in 1:random_walkers
+			E_met, E2_met, Eln_met, ln_met, rejections_met = metropolis(N,α)
+			E += E_met/random_walkers
+			E2 += E2_met/random_walkers
+			Eln += Eln_met/random_walkers
+			ln += ln_met/random_walkers
+			rejection_ratio += rejections_met/random_walkers		
+		end
+		E_analytical = α/2 + 1/8/α
+		var_analytical = (1-4*α^2)^2/32/α^2
+
+		# Define the next α
+		# dE_dalpha = 2*(Eln-E*ln)
+		α = α + 0.05
+
+		# Update the arrays for plotting
+		energy[i] = E
+		alpha[i] = α
+		variance[i] = E2 - E^2
+		En_analytical[i] = E_analytical
+		Var_analytical[i] = var_analytical
+	end
+	return energy,alpha,variance,En_analytical,Var_analytical
+end
+```
+
+Now that we have defined all the functions, time to run the simulations and plot the results!
+
+# Simulation Results
+
+## Running the simulation
+
+```julia,results = "hidden"
+energy,alpha,variance,E_analytical,var_analytical = iterate_alpha()
+```
+
+This returns 5 entities:
+1. `energy`: Array containing the energy values as obtained.
+2. `alpha`: Array containing values of $\alpha$ obtained during the iterations.
+3. `variance`: Array containing values of variances
+5. `E_analytical`: Array containing energy values for the values of $\alpha$ in `alpha` calculated by using the analytical formula.
+6. `var_analytical`: Array containing variance values for the values of $\alpha$ in `alpha` calculated by using the analytical formula.
+
+
+## Plotting the results.
+
+1. **Energy**
+
+```julia
+plot(
+    energy,
+    label = "calculated expectation of energy",
+    title = "Energy Plots",
+    xlabel = "timestep",
+    ylabel = "<E>",
+    linecolor = :blue,
+)
+plot!(E_analytical,label = "Analytical Energy")
+```
+
+2. **Variance**
+```julia
+plot(
+    variance,
+    title = "Variance in energy",
+    label = false,
+    ylabel = "Var(E)",
+    xlabel = "timestep",
+    linecolor = :blue
+)
+```
+
+3. **Energy vs $\alpha$**
+```julia
+scatter(
+    alpha,energy,
+    label = "Calculated energy",
+    title = "Energy vs α",
+    markercolor = :blue,
+    xlabel = "α",
+    ylabel = "<E>"
+)
+	
+scatter!(
+    alpha,
+    E_analytical,
+    label = "Calculated energy",
+    title = "Energy vs α",
+    markercolor = :red
+)
+```
+
+# Inference
+We can see in the minimization process. At $\alpha = 0.5$, we have the minimum energy of $E = 0.5$ which is expected as for a harmonic oscillator, 
+
+$ E_n = (n + \frac{1}{2})\hbar \omega $
+
+With the units, $\hbar = \omega = 1$, the ground state energy is indeed $ E_0 = \frac{1}{2} $.
